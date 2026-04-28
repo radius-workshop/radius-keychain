@@ -45,6 +45,8 @@ contract AccountKeychain {
     error InvalidSignature();
     error SpendingLimitExceeded();
     error CallNotInScope();
+    error NoCallScopes();
+    error SelfCallBlocked();
     error NotOwner();
     error ZeroAddress();
 
@@ -107,6 +109,7 @@ contract AccountKeychain {
         address signer = ECDSA.recover(digest, signature);
         if (signer != key.signer) revert InvalidSignature();
 
+        if (target == address(this)) revert SelfCallBlocked();
         _checkCallScope(owner, keyId, target, data);
 
         (bool success, bytes memory result) = target.call{value: value}(data);
@@ -188,7 +191,7 @@ contract AccountKeychain {
         view
     {
         CallScope[] storage scopes = _callScopes[owner][keyId];
-        if (scopes.length == 0) return;
+        if (scopes.length == 0) revert NoCallScopes();
 
         bytes4 selector = bytes4(data[:4]);
         for (uint256 i = 0; i < scopes.length; i++) {

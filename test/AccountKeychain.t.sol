@@ -130,6 +130,55 @@ contract AccountKeychainTest is Test {
         assertEq(keychain.remainingBudget(owner, keyId, address(usdc)), 70e6);
     }
 
+    function _signExecuteByKey(address target, uint256 value, bytes memory data, uint256 nonce)
+        internal
+        view
+        returns (bytes memory)
+    {
+        bytes32 inner = keccak256(
+            abi.encode(address(keychain), owner, keyId, target, value, data, nonce, block.chainid)
+        );
+        bytes32 digest = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", inner));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(agentKey, digest);
+        return abi.encodePacked(r, s, v);
+    }
+
+    function test_selfCall_blocked() public {
+        vm.prank(owner);
+        keychain.authorizeKey(keyId, agent, 0);
+        vm.prank(owner);
+        keychain.addCallScope(keyId, address(keychain), bytes4(keccak256("authorizeKey(bytes32,address,uint64)")));
+
+        bytes memory data = abi.encodeWithSelector(
+            keychain.authorizeKey.selector, bytes32(uint256(99)), agent, uint64(0)
+        );
+        bytes memory sig = _signExecuteByKey(address(keychain), 0, data, 0);
+        vm.expectRevert(AccountKeychain.SelfCallBlocked.selector);
+        keychain.executeByKey(owner, keyId, address(keychain), 0, data, sig);
+    }
+
+    function test_emptyScopes_reverts() public {
+        vm.prank(owner);
+        keychain.authorizeKey(keyId, agent, 0);
+
+        bytes memory data = abi.encodeWithSelector(MockUSDC.mint.selector, recipient, 100e6);
+        bytes memory sig = _signExecuteByKey(address(usdc), 0, data, 0);
+        vm.expectRevert(AccountKeychain.NoCallScopes.selector);
+        keychain.executeByKey(owner, keyId, address(usdc), 0, data, sig);
+    }
+
+    function test_executeByKey_with_scope() public {
+        vm.prank(owner);
+        keychain.authorizeKey(keyId, agent, 0);
+        vm.prank(owner);
+        keychain.addCallScope(keyId, address(usdc), MockUSDC.mint.selector);
+
+        bytes memory data = abi.encodeWithSelector(MockUSDC.mint.selector, recipient, 100e6);
+        bytes memory sig = _signExecuteByKey(address(usdc), 0, data, 0);
+        keychain.executeByKey(owner, keyId, address(usdc), 0, data, sig);
+        assertEq(usdc.balanceOf(recipient), 100e6);
+    }
+
     function test_wrongSigner_reverts() public {
         vm.prank(owner);
         keychain.authorizeKey(keyId, agent, 0);
